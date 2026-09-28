@@ -1,0 +1,26 @@
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated reports
+reports/
+
+# Raw and processed data
+data/raw/
+data/processed/
+
+# Logs
+*.log
