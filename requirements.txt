@@ -2,3 +2,5 @@ google-genai
 pydantic
 python-dotenv
 tavily-python
+requests
+beautifulsoup4
