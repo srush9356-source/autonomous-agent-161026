@@ -1,0 +1,1418 @@
+import json
+
+from pathlib import Path
+
+import streamlit as st
+
+def load_research_metrics():
+
+    metrics_path = Path("reports/research_metrics.json")
+
+    if not metrics_path.exists():
+
+        return {}
+
+    try:
+
+        return json.loads(
+
+            metrics_path.read_text(encoding="utf-8")
+
+        )
+
+    except (json.JSONDecodeError, OSError):
+
+        return {}
+
+# =========================================================
+
+# PAGE CONFIGURATION
+
+# =========================================================
+
+st.set_page_config(
+
+    page_title="Autonomous Market & Research Intelligence",
+
+    page_icon="🔎",
+
+    layout="wide",
+
+)
+
+# =========================================================
+
+# PATHS
+
+# =========================================================
+
+REPORTS_DIR = Path("reports")
+
+REPORT_PATH = (
+
+    REPORTS_DIR / "research_report.md"
+
+)
+
+PDF_PATH = (
+
+    REPORTS_DIR / "research_report.pdf"
+
+)
+
+LEDGER_JSON_PATH = (
+
+    REPORTS_DIR / "evidence_ledger.json"
+
+)
+
+LEDGER_MARKDOWN_PATH = (
+
+    REPORTS_DIR / "evidence_ledger.md"
+
+)
+
+# =========================================================
+
+# HELPER FUNCTIONS
+
+# =========================================================
+
+def load_json(path: Path):
+
+    if not path.exists():
+
+        return None
+
+    try:
+
+        return json.loads(
+
+            path.read_text(
+
+                encoding="utf-8"
+
+            )
+
+        )
+
+    except Exception:
+
+        return None
+
+def load_text(path: Path):
+
+    if not path.exists():
+
+        return None
+
+    try:
+
+        return path.read_text(
+
+            encoding="utf-8"
+
+        )
+
+    except Exception:
+
+        return None
+
+def calculate_metrics(ledger):
+
+    """
+
+    Calculates dashboard-level metrics from
+
+    the Evidence Ledger.
+
+    These are fallback metrics used when the pipeline's
+    persisted research_metrics.json is unavailable.
+
+    """
+
+    if not ledger:
+
+        return {
+
+            "sources": 0,
+
+            "evidence": 0,
+
+            "claims": 0,
+
+            "insights": 0,
+
+            "traceability": 0.0,
+
+            "claim_support": 0.0,
+
+            "avg_claim_confidence": 0.0,
+
+            "avg_evidence_confidence": 0.0,
+
+        }
+
+    claims_data = ledger.get(
+
+        "claims",
+
+        [],
+
+    )
+
+    insights_data = ledger.get(
+
+        "insights",
+
+        [],
+
+    )
+
+    evidence_ids = set()
+
+    source_urls = set()
+
+    linked_claims = 0
+
+    supported_claims = 0
+
+    claim_confidences = []
+
+    evidence_confidences = []
+
+    for claim in claims_data:
+
+        claim_confidence = claim.get(
+
+            "claim_confidence",
+
+            0.0,
+
+        )
+
+        claim_confidences.append(
+
+            float(claim_confidence)
+
+        )
+
+        if claim.get("status") == "supported":
+
+            supported_claims += 1
+
+        evidence_items = claim.get(
+
+            "evidence",
+
+            [],
+
+        )
+
+        if evidence_items:
+
+            linked_claims += 1
+
+        for evidence in evidence_items:
+
+            evidence_id = evidence.get(
+
+                "evidence_id"
+
+            )
+
+            source_url = evidence.get(
+
+                "source_url"
+
+            )
+
+            confidence = evidence.get(
+
+                "evidence_confidence",
+
+                0.0,
+
+            )
+
+            if evidence_id:
+
+                evidence_ids.add(
+
+                    evidence_id
+
+                )
+
+            if source_url:
+
+                source_urls.add(
+
+                    source_url
+
+                )
+
+            evidence_confidences.append(
+
+                float(confidence)
+
+            )
+
+    claim_count = len(claims_data)
+
+    traceability = (
+
+        linked_claims / claim_count
+
+        if claim_count
+
+        else 0.0
+
+    )
+
+    claim_support = (
+
+        supported_claims / claim_count
+
+        if claim_count
+
+        else 0.0
+
+    )
+
+    average_claim_confidence = (
+
+        sum(claim_confidences)
+
+        / len(claim_confidences)
+
+        if claim_confidences
+
+        else 0.0
+
+    )
+
+    average_evidence_confidence = (
+
+        sum(evidence_confidences)
+
+        / len(evidence_confidences)
+
+        if evidence_confidences
+
+        else 0.0
+
+    )
+
+    return {
+
+        "sources": len(source_urls),
+
+        "evidence": len(evidence_ids),
+
+        "claims": claim_count,
+
+        "insights": len(insights_data),
+
+        "traceability": traceability,
+
+        "claim_support": claim_support,
+
+        "avg_claim_confidence": (
+
+            average_claim_confidence
+
+        ),
+
+        "avg_evidence_confidence": (
+
+            average_evidence_confidence
+
+        ),
+
+    }
+
+def confidence_label(value):
+
+    if value >= 0.85:
+
+        return "High"
+
+    if value >= 0.70:
+
+        return "Moderate"
+
+    return "Low"
+
+# =========================================================
+
+# HEADER
+
+# =========================================================
+
+st.title(
+
+    "🔎 Autonomous Market & Research Intelligence"
+
+)
+
+st.caption(
+
+    "Evidence-backed autonomous research "
+
+    "with claim-to-source traceability"
+
+)
+
+# =========================================================
+
+# SIDEBAR
+
+# =========================================================
+
+st.sidebar.header(
+
+    "Research Intelligence"
+
+)
+
+st.sidebar.write(
+
+    "Configure a research objective and review "
+
+    "evidence-backed intelligence generated by "
+
+    "the autonomous research pipeline."
+
+)
+
+st.sidebar.divider()
+
+if st.sidebar.button(
+
+    "🔄 Refresh Dashboard",
+
+    use_container_width=True,
+
+):
+
+    st.rerun()
+
+st.sidebar.divider()
+
+st.sidebar.subheader(
+
+    "Pipeline Status"
+
+)
+
+st.sidebar.success(
+
+    "Core pipeline available"
+
+)
+
+st.sidebar.success(
+
+    "Evidence Ledger available"
+
+)
+
+st.sidebar.success(
+
+    "Research Metrics available"
+
+)
+
+st.sidebar.warning(
+
+    "Live execution temporarily locked "
+
+    "while LLM quota resets."
+
+)
+
+# =========================================================
+
+# RESEARCH CONTROL PANEL
+
+# =========================================================
+
+st.subheader(
+
+    "🎯 Research Objective"
+
+)
+
+topic = st.text_input(
+
+    "Research Topic",
+
+    value="Indian fruit pulp market",
+
+    placeholder="Example: Electric vehicle market in India",
+
+)
+
+industry = st.text_input(
+
+    "Industry",
+
+    value="Food Processing",
+
+    placeholder="Example: Automotive",
+
+)
+
+objective = st.text_area(
+
+    "Research Objective",
+
+    value=(
+
+        "Analyze current market trends, major competitors, "
+
+        "pricing signals, growth opportunities, and risks "
+
+        "in the Indian fruit pulp market."
+
+    ),
+
+    height=110,
+
+)
+
+mode = st.selectbox(
+
+    "Research Mode",
+
+    [
+
+        "FULL — Comprehensive Intelligence",
+
+        "FAST — Quota-Safe Research",
+
+    ],
+
+)
+
+research_col1, research_col2 = st.columns(
+
+    [3, 1]
+
+)
+
+with research_col1:
+
+    if mode.startswith("FULL"):
+
+        st.info(
+
+            "FULL mode will perform broader research, "
+
+            "competitive intelligence, evidence analysis, "
+
+            "contradiction detection, insight generation, "
+
+            "and executive reporting."
+
+        )
+
+    else:
+
+        st.info(
+
+            "FAST mode performs a smaller research run "
+
+            "with reduced API usage."
+
+        )
+
+with research_col2:
+
+    st.button(
+
+        "🚀 Start Autonomous Research",
+
+        use_container_width=True,
+
+        disabled=True,
+
+        help=(
+
+            "Temporarily disabled until the LLM quota "
+
+            "resets. This prevents accidental API usage."
+
+        ),
+
+    )
+
+st.caption(
+
+    "Live research execution is intentionally locked "
+
+    "during the current quota-reset period."
+
+)
+
+# =========================================================
+
+# LOAD GENERATED OUTPUTS
+
+# =========================================================
+
+ledger = load_json(
+
+    LEDGER_JSON_PATH
+
+)
+
+report = load_text(
+
+    REPORT_PATH
+
+)
+
+fallback_metrics = calculate_metrics(ledger)
+saved_metrics = load_research_metrics()
+
+# Prefer the complete persisted pipeline metrics. If the file is absent
+# or a field is missing, fall back to metrics calculated from the ledger.
+metrics = {
+    "sources": saved_metrics.get("sources_analyzed", fallback_metrics["sources"]),
+    "evidence": saved_metrics.get("evidence_records", fallback_metrics["evidence"]),
+    "claims": saved_metrics.get("claims_generated", fallback_metrics["claims"]),
+    "insights": saved_metrics.get("insights_generated", fallback_metrics["insights"]),
+    "traceability": saved_metrics.get("evidence_traceability_rate", fallback_metrics["traceability"]),
+    "claim_support": saved_metrics.get("claim_support_rate", fallback_metrics["claim_support"]),
+    "avg_claim_confidence": saved_metrics.get("average_claim_confidence", fallback_metrics["avg_claim_confidence"]),
+    "avg_evidence_confidence": saved_metrics.get("average_evidence_confidence", fallback_metrics["avg_evidence_confidence"]),
+    "overall_quality": saved_metrics.get("overall_research_quality", 0.0),
+    "contradictions": saved_metrics.get("contradictions_detected", 0),
+    "extraction_success_rate": saved_metrics.get("extraction_success_rate", 0.0),
+    "high_quality_sources": saved_metrics.get("high_quality_sources", 0),
+}
+
+# Streamlit progress bars require values between 0.0 and 1.0.
+for metric_name in (
+    "traceability", "claim_support", "avg_claim_confidence",
+    "avg_evidence_confidence", "overall_quality", "extraction_success_rate",
+):
+    try:
+        metrics[metric_name] = max(0.0, min(1.0, float(metrics[metric_name])))
+    except (TypeError, ValueError):
+        metrics[metric_name] = 0.0
+
+# =========================================================
+
+# SYSTEM STATUS
+
+# =========================================================
+
+st.divider()
+
+st.subheader(
+
+    "⚙️ System Status"
+
+)
+
+status1, status2, status3, status4 = (
+
+    st.columns(4)
+
+)
+
+with status1:
+
+    if ledger:
+
+        st.success(
+
+            "Evidence Ledger Ready"
+
+        )
+
+    else:
+
+        st.warning(
+
+            "Evidence Ledger Pending"
+
+        )
+
+with status2:
+
+    if report:
+
+        st.success(
+
+            "Research Report Ready"
+
+        )
+
+    else:
+
+        st.warning(
+
+            "Research Report Pending"
+
+        )
+
+with status3:
+
+    if PDF_PATH.exists():
+
+        st.success(
+
+            "PDF Export Ready"
+
+        )
+
+    else:
+
+        st.warning(
+
+            "PDF Export Pending"
+
+        )
+
+with status4:
+
+    st.success(
+
+        "Pipeline Architecture Ready"
+
+    )
+
+# =========================================================
+
+# RESEARCH COVERAGE
+
+# =========================================================
+
+st.divider()
+
+st.subheader(
+
+    "📊 Research Coverage"
+
+)
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+
+    st.metric(
+
+        "Sources",
+
+        metrics["sources"],
+
+    )
+
+with col2:
+
+    st.metric(
+
+        "Evidence Records",
+
+        metrics["evidence"],
+
+    )
+
+with col3:
+
+    st.metric(
+
+        "Research Claims",
+
+        metrics["claims"],
+
+    )
+
+with col4:
+
+    st.metric(
+
+        "Strategic Insights",
+
+        metrics["insights"],
+
+    )
+
+# =========================================================
+
+# RESEARCH QUALITY
+
+# =========================================================
+
+st.subheader(
+
+    "🎯 Research Quality"
+
+)
+
+quality_col1, quality_col2 = (
+
+    st.columns(2)
+
+)
+
+with quality_col1:
+
+    st.write(
+
+        "**Evidence Traceability**"
+
+    )
+
+    st.progress(
+
+        metrics["traceability"]
+
+    )
+
+    st.caption(
+
+        f"{metrics['traceability'] * 100:.1f}% "
+
+        "of claims have linked evidence."
+
+    )
+
+    st.write(
+
+        "**Claim Support Rate**"
+
+    )
+
+    st.progress(
+
+        metrics["claim_support"]
+
+    )
+
+    st.caption(
+
+        f"{metrics['claim_support'] * 100:.1f}% "
+
+        "of claims are marked supported."
+
+    )
+
+with quality_col2:
+
+    st.write(
+
+        "**Average Evidence Confidence**"
+
+    )
+
+    st.progress(
+
+        metrics["avg_evidence_confidence"]
+
+    )
+
+    st.caption(
+
+        f"{metrics['avg_evidence_confidence']:.2f} "
+
+        f"({confidence_label(metrics['avg_evidence_confidence'])})"
+
+    )
+
+    st.write(
+
+        "**Average Claim Confidence**"
+
+    )
+
+    st.progress(
+
+        metrics["avg_claim_confidence"]
+
+    )
+
+    st.caption(
+
+        f"{metrics['avg_claim_confidence']:.2f} "
+
+        f"({confidence_label(metrics['avg_claim_confidence'])})"
+
+    )
+
+# =========================================================
+# ADDITIONAL PIPELINE METRICS
+# =========================================================
+
+st.subheader("📈 Additional Pipeline Metrics")
+extra1, extra2, extra3, extra4 = st.columns(4)
+with extra1:
+    st.metric("Contradictions", int(metrics["contradictions"]))
+with extra2:
+    st.metric("High-Quality Sources", int(metrics["high_quality_sources"]))
+with extra3:
+    st.metric("Extraction Success", f"{metrics['extraction_success_rate'] * 100:.1f}%")
+with extra4:
+    st.metric("Overall Research Quality", f"{metrics['overall_quality'] * 100:.1f}%")
+
+
+# =========================================================
+
+# EXECUTIVE REPORT
+
+# =========================================================
+
+st.divider()
+
+st.subheader(
+
+    "📄 Executive Research Report"
+
+)
+
+if report:
+
+    st.markdown(
+
+        report
+
+    )
+
+else:
+
+    st.info(
+
+        "No real research report has been generated yet. "
+
+        "The report will appear here after the first "
+
+        "successful autonomous research run."
+
+    )
+
+# =========================================================
+
+# EVIDENCE TRACEABILITY
+
+# =========================================================
+
+st.divider()
+
+st.subheader(
+
+    "🔗 Claim → Evidence → Source"
+
+)
+
+if ledger and ledger.get("claims"):
+
+    for claim in ledger["claims"]:
+
+        claim_id = claim.get(
+
+            "claim_id",
+
+            "Unknown",
+
+        )
+
+        claim_text = claim.get(
+
+            "claim",
+
+            "No claim text",
+
+        )
+
+        with st.expander(
+
+            f"{claim_id} — {claim_text}"
+
+        ):
+
+            claim_confidence = claim.get(
+
+                "claim_confidence",
+
+                0.0,
+
+            )
+
+            claim_status = claim.get(
+
+                "status",
+
+                "unknown",
+
+            )
+
+            st.write(
+
+                f"**Claim confidence:** "
+
+                f"{claim_confidence:.2f}"
+
+            )
+
+            st.write(
+
+                f"**Status:** "
+
+                f"{claim_status}"
+
+            )
+
+            evidence_items = claim.get(
+
+                "evidence",
+
+                [],
+
+            )
+
+            if not evidence_items:
+
+                st.warning(
+
+                    "No supporting evidence found."
+
+                )
+
+                continue
+
+            for evidence in evidence_items:
+
+                st.markdown(
+
+                    f"### {evidence.get('evidence_id', 'EVIDENCE')}"
+
+                )
+
+                st.write(
+
+                    f"**Source:** "
+
+                    f"{evidence.get('source_title', 'Unknown')}"
+
+                )
+
+                st.write(
+
+                    f"**Source type:** "
+
+                    f"{evidence.get('source_type', 'Unknown')}"
+
+                )
+
+                evidence_confidence = evidence.get(
+
+                    "evidence_confidence",
+
+                    0.0,
+
+                )
+
+                st.write(
+
+                    f"**Evidence confidence:** "
+
+                    f"{evidence_confidence:.2f}"
+
+                )
+
+                st.write(
+
+                    "**Claim extracted from source:**"
+
+                )
+
+                st.write(
+
+                    evidence.get(
+
+                        "claim_from_source",
+
+                        "",
+
+                    )
+
+                )
+
+                st.write(
+
+                    "**Supporting text:**"
+
+                )
+
+                st.write(
+
+                    evidence.get(
+
+                        "supporting_text",
+
+                        "",
+
+                    )
+
+                )
+
+                source_url = evidence.get(
+
+                    "source_url"
+
+                )
+
+                if source_url:
+
+                    st.markdown(
+
+                        f"[🌐 Open source]({source_url})"
+
+                    )
+
+                st.divider()
+
+else:
+
+    st.info(
+
+        "Evidence traceability will appear "
+
+        "after the first successful research run."
+
+    )
+
+# =========================================================
+
+# INSIGHT TRACEABILITY
+
+# =========================================================
+
+st.divider()
+
+st.subheader(
+
+    "💡 Insight Traceability"
+
+)
+
+if ledger and ledger.get("insights"):
+
+    for insight in ledger["insights"]:
+
+        insight_id = insight.get(
+
+            "insight_id",
+
+            "INSIGHT",
+
+        )
+
+        insight_title = insight.get(
+
+            "title",
+
+            "Research Insight",
+
+        )
+
+        with st.expander(
+
+            f"{insight_id} — {insight_title}"
+
+        ):
+
+            st.write(
+
+                f"**Confidence:** "
+
+                f"{insight.get('confidence', 0.0):.2f}"
+
+            )
+
+            supporting_claims = insight.get(
+
+                "supporting_claims",
+
+                [],
+
+            )
+
+            for supporting_claim in (
+
+                supporting_claims
+
+            ):
+
+                st.markdown(
+
+                    f"**Supporting Claim:** "
+
+                    f"{supporting_claim.get('claim_id', '')}"
+
+                )
+
+                for evidence in supporting_claim.get(
+
+                    "evidence",
+
+                    [],
+
+                ):
+
+                    st.write(
+
+                        f"• "
+
+                        f"{evidence.get('evidence_id', '')} — "
+
+                        f"{evidence.get('source_title', '')}"
+
+                    )
+
+else:
+
+    st.info(
+
+        "Insight traceability will appear "
+
+        "after a successful research run."
+
+    )
+
+# =========================================================
+
+# EXPORT CENTER
+
+# =========================================================
+
+st.divider()
+
+st.subheader(
+
+    "📦 Export Research"
+
+)
+
+export_col1, export_col2, export_col3 = (
+
+    st.columns(3)
+
+)
+
+with export_col1:
+
+    if report:
+
+        st.download_button(
+
+            label="⬇️ Markdown Report",
+
+            data=report,
+
+            file_name=(
+
+                "research_report.md"
+
+            ),
+
+            mime="text/markdown",
+
+            use_container_width=True,
+
+        )
+
+    else:
+
+        st.button(
+
+            "⬇️ Markdown Report",
+
+            disabled=True,
+
+            use_container_width=True,
+
+        )
+
+with export_col2:
+
+    if PDF_PATH.exists():
+
+        pdf_data = PDF_PATH.read_bytes()
+
+        st.download_button(
+
+            label="📕 PDF Report",
+
+            data=pdf_data,
+
+            file_name=(
+
+                "research_report.pdf"
+
+            ),
+
+            mime="application/pdf",
+
+            use_container_width=True,
+
+        )
+
+    else:
+
+        st.button(
+
+            "📕 PDF Report",
+
+            disabled=True,
+
+            use_container_width=True,
+
+        )
+
+with export_col3:
+
+    if LEDGER_MARKDOWN_PATH.exists():
+
+        ledger_markdown = (
+
+            LEDGER_MARKDOWN_PATH.read_text(
+
+                encoding="utf-8"
+
+            )
+
+        )
+
+        st.download_button(
+
+            label="🔗 Evidence Ledger",
+
+            data=ledger_markdown,
+
+            file_name=(
+
+                "evidence_ledger.md"
+
+            ),
+
+            mime="text/markdown",
+
+            use_container_width=True,
+
+        )
+
+    else:
+
+        st.button(
+
+            "🔗 Evidence Ledger",
+
+            disabled=True,
+
+            use_container_width=True,
+
+        )
+
+# =========================================================
+
+# PROJECT ARCHITECTURE
+
+# =========================================================
+
+st.divider()
+
+with st.expander(
+
+    "🏗️ View System Architecture"
+
+):
+
+    st.code(
+
+        """
+
+Research Objective
+
+        ↓
+
+Research Planner
+
+        ↓
+
+Live Web Research
+
+        ↓
+
+Source Validation + Scoring
+
+        ↓
+
+Web Content Extraction
+
+        ↓
+
+Evidence Extraction
+
+        ↓
+
+Claim Extraction
+
+        ↓
+
+Contradiction Detection
+
+        ↓
+
+Insight / Gap Analysis
+
+        ↓
+
+Evidence Ledger
+
+        ↓
+
+Research Metrics
+
+        ↓
+
+Competitive Intelligence
+
+        ↓
+
+Executive Report
+
+        ↓
+
+Markdown + PDF
+
+        ↓
+
+Streamlit Intelligence Dashboard
+
+        """,
+
+        language="text",
+
+    )
+
+# =========================================================
+
+# FOOTER
+
+# =========================================================
+
+st.divider()
+
+st.caption(
+
+    "Autonomous Market & Research Intelligence Agent "
+
+    "• Evidence-backed research • "
+
+    "Claim-to-source traceability"
+
+)

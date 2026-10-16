@@ -22,12 +22,16 @@ class LLMClient:
 
         if LLM_PROVIDER == "gemini":
             self.provider = "gemini"
-            self.client = genai.Client(api_key=GEMINI_API_KEY)
+            self.client = genai.Client(
+                api_key=GEMINI_API_KEY
+            )
             self.model = GEMINI_MODEL
 
         elif LLM_PROVIDER == "groq":
             self.provider = "groq"
-            self.client = Groq(api_key=GROQ_API_KEY)
+            self.client = Groq(
+                api_key=GROQ_API_KEY
+            )
             self.model = GROQ_MODEL
 
         else:
@@ -113,13 +117,27 @@ class LLMClient:
         request,
         max_attempts: int = 3,
     ):
-        """Retry temporary provider failures."""
+        """Retry temporary failures but fail fast on quota errors."""
 
         for attempt in range(max_attempts):
             try:
                 return request()
 
             except Exception as exc:
+                error_text = str(exc).lower()
+
+                if (
+                    "429" in error_text
+                    or "resource_exhausted" in error_text
+                    or "rate limit" in error_text
+                    or "quota" in error_text
+                ):
+                    raise RuntimeError(
+                        "LLM quota/rate limit exceeded. "
+                        "Please wait for the provider quota to reset "
+                        "or use another available provider."
+                    ) from exc
+
                 if attempt == max_attempts - 1:
                     raise exc
 

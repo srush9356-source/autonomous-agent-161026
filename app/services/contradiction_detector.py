@@ -6,7 +6,7 @@ from app.models.contradiction import Contradiction
 
 
 class ContradictionDetector:
-    """Detects conflicts between research claims."""
+    """Detects genuine conflicts between research claims."""
 
     def __init__(self):
         self.llm = LLMClient()
@@ -14,20 +14,34 @@ class ContradictionDetector:
     def detect(
         self,
         claims: list[Claim],
+        max_claims: int = 60,
     ) -> list[Contradiction]:
-        """Identify contradictions among research claims."""
+        """
+        Identify genuine contradictions among research claims.
+
+        Claims are limited to the strongest available claims to keep
+        the analysis request bounded.
+        """
 
         if len(claims) < 2:
             return []
+
+        # Keep the highest-confidence claims.
+        selected_claims = sorted(
+            claims,
+            key=lambda claim: claim.confidence,
+            reverse=True,
+        )[:max_claims]
 
         claims_text = "\n\n".join(
             (
                 f"CLAIM ID: {claim.claim_id}\n"
                 f"STATEMENT: {claim.statement}\n"
-                f"EVIDENCE IDS: {', '.join(claim.evidence_ids)}\n"
+                f"EVIDENCE IDS: "
+                f"{', '.join(claim.evidence_ids)}\n"
                 f"CONFIDENCE: {claim.confidence}"
             )
-            for claim in claims
+            for claim in selected_claims
         )
 
         prompt = f"""
@@ -43,17 +57,18 @@ Instructions:
 - Compare claims based only on the information provided.
 - Identify only genuine factual conflicts.
 - Do not treat different wording as a contradiction.
-- Do not treat claims as contradictory merely because they
-  discuss different topics, periods, markets, regions, or metrics.
+- Do not treat claims as contradictory merely because they discuss
+  different topics, periods, markets, regions, or metrics.
 - Pay attention to dates, geographic scope, units, and definitions.
 - Do not invent missing context.
 - Do not resolve or choose between conflicting claims.
 - Preserve both claims when a contradiction exists.
-- If there are no genuine contradictions, return an empty list.
 - Severity must be one of: "low", "medium", "high".
 - Confidence must be between 0.0 and 1.0.
+- Only reference claim IDs that appear in the input.
+- If there are no genuine contradictions, return an empty list.
 
-Return ONLY valid JSON in this format:
+Return ONLY valid JSON:
 
 [
     {{
@@ -78,17 +93,36 @@ Do not include explanations outside the JSON.
                 "The contradiction detector returned invalid JSON."
             ) from exc
 
+        valid_claim_ids = {
+            claim.claim_id
+            for claim in selected_claims
+        }
+
         contradictions = []
 
-        for index, item in enumerate(contradiction_data, start=1):
+        for item in contradiction_data:
+
+            claim_a_id = item.get("claim_a_id")
+            claim_b_id = item.get("claim_b_id")
+
+            if claim_a_id not in valid_claim_ids:
+                continue
+
+            if claim_b_id not in valid_claim_ids:
+                continue
+
             contradictions.append(
                 Contradiction(
-                    contradiction_id=f"CON-{index:03d}",
-                    claim_a_id=item["claim_a_id"],
-                    claim_b_id=item["claim_b_id"],
+                    contradiction_id=(
+                        f"CON-{len(contradictions) + 1:03d}"
+                    ),
+                    claim_a_id=claim_a_id,
+                    claim_b_id=claim_b_id,
                     explanation=item["explanation"],
                     severity=item["severity"],
-                    confidence=item["confidence"],
+                    confidence=float(
+                        item["confidence"]
+                    ),
                 )
             )
 

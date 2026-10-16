@@ -3,17 +3,15 @@ from bs4 import BeautifulSoup
 
 
 class WebContentExtractor:
-    """Extracts readable text content from a webpage."""
+    """Extracts readable and bounded text content from a webpage."""
 
-    def extract(self, url: str) -> str:
-        """Fetch a webpage and return its readable text."""
-
+    def extract(self, url: str, max_chars: int = 12000) -> str:
         if not url.strip():
             raise ValueError("URL cannot be empty.")
 
         response = requests.get(
             url,
-            timeout=15,
+            timeout=8,
             headers={
                 "User-Agent": (
                     "Mozilla/5.0 "
@@ -27,24 +25,14 @@ class WebContentExtractor:
 
         response.raise_for_status()
 
-        soup = BeautifulSoup(
-            response.text,
-            "html.parser",
-        )
+        soup = BeautifulSoup(response.text, "html.parser")
 
-        for element in soup(
-            ["script", "style", "noscript"]
-        ):
+        for element in soup(["script", "style", "noscript"]):
             element.decompose()
 
-        text = soup.get_text(
-            separator=" ",
-            strip=True,
-        )
+        text = soup.get_text(separator=" ", strip=True)
 
         if not text:
-            raise ValueError(
-                f"No readable text found at URL: {url}"
-            )
+            raise ValueError(f"No readable text found at URL: {url}")
 
-        return text
+        return text[:max_chars]

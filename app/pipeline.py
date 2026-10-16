@@ -1,0 +1,1049 @@
+from app.agents.planner import ResearchPlanner
+
+from app.models.research import ResearchObjective
+
+from app.services.source_validator import SourceValidator
+
+from app.services.source_scorer import SourceScorer
+
+from app.services.evidence_ledger import EvidenceLedger
+
+from app.services.research_metrics import ResearchMetrics
+
+from app.tools.search import WebSearchTool
+
+from app.tools.web_extractor import WebContentExtractor
+
+from app.services.evidence_extractor import EvidenceExtractor
+
+from app.services.claim_extractor import ClaimExtractor
+
+from app.services.contradiction_detector import ContradictionDetector
+
+from app.services.insight_analyzer import InsightAnalyzer
+
+from app.services.competitive_intelligence import (
+
+    CompetitiveIntelligenceExtractor,
+
+)
+
+from app.services.report_generator import ReportGenerator
+
+from app.services.report_exporter import ReportExporter
+
+from app.services.pdf_report_exporter import PDFReportExporter
+
+from app.services.metrics_exporter import MetricsExporter
+
+class ResearchPipeline:
+
+    """
+
+    End-to-end autonomous market research pipeline.
+
+    Pipeline:
+
+        Research Objective
+
+                ↓
+
+        Research Planning
+
+                ↓
+
+        Live Web Search
+
+                ↓
+
+        Source Validation
+
+                ↓
+
+        Source Scoring
+
+                ↓
+
+        Web Content Extraction
+
+                ↓
+
+        Evidence Extraction
+
+                ↓
+
+        Claim Extraction
+
+                ↓
+
+        Contradiction Detection
+
+                ↓
+
+        Insight Analysis
+
+                ↓
+
+        Evidence Ledger
+
+                ↓
+
+        Research Metrics
+
+                ↓
+
+        Executive Report
+
+                ↓
+
+        Markdown + PDF Export
+
+    """
+
+    def __init__(self):
+
+        self.planner = ResearchPlanner()
+
+        self.search_tool = WebSearchTool()
+
+        self.source_validator = SourceValidator()
+
+        self.source_scorer = SourceScorer()
+
+        self.web_extractor = WebContentExtractor()
+
+        self.evidence_extractor = EvidenceExtractor()
+
+        self.claim_extractor = ClaimExtractor()
+
+        self.metrics_exporter = MetricsExporter()
+
+        self.contradiction_detector = (
+
+            ContradictionDetector()
+
+        )
+
+        self.insight_analyzer = InsightAnalyzer()
+
+        self.competitive_intelligence = (
+
+            CompetitiveIntelligenceExtractor()
+
+        )
+
+        self.evidence_ledger = EvidenceLedger()
+
+        self.research_metrics = ResearchMetrics()
+
+        self.report_generator = ReportGenerator()
+
+        self.report_exporter = ReportExporter()
+
+        self.pdf_report_exporter = PDFReportExporter()
+
+    def run(
+
+        self,
+
+        research_objective: ResearchObjective,
+        mode: str = 'FULL',
+
+    ):
+
+        print("\n" + "=" * 70)
+
+        print(
+
+            "AUTONOMOUS MARKET & RESEARCH "
+
+            "INTELLIGENCE AGENT"
+
+        )
+
+        print("=" * 70)
+
+        # =========================================================
+
+        # 1. RESEARCH PLANNING
+
+        # =========================================================
+
+        print("\n[1/10] Creating research plan...")
+
+        tasks = self.planner.create_plan(
+
+            research_objective
+
+        )
+
+        if not tasks:
+
+            raise RuntimeError(
+
+                "Research planner returned no tasks."
+
+            )
+
+        print(
+
+            f"Created {len(tasks)} research tasks."
+
+        )
+
+        # =========================================================
+
+        # 2. LIVE WEB RESEARCH
+
+        # =========================================================
+
+        print(
+
+            "\n[2/10] Performing live web research..."
+
+        )
+
+        all_sources = []
+
+        # ---------------------------------------------------------
+
+        # QUOTA-SAFE MODE
+
+        # ---------------------------------------------------------
+
+        # Current temporary configuration:
+
+        #
+
+        # - First 3 research tasks
+
+        # - Maximum 2 search results per task
+
+        #
+
+        # The final FULL mode will restore broader research
+
+        # coverage after the Gemini quota resets.
+
+        # ---------------------------------------------------------
+
+        selected_tasks = tasks[:3] if mode.upper().startswith('FAST') else tasks
+
+        for task in selected_tasks:
+
+            print(
+
+                f"\nResearch task: "
+
+                f"{task.question}"
+
+            )
+
+            try:
+
+                search_results = (
+
+                    self.search_tool.search(
+
+                        query=task.question,
+
+                        max_results=(2 if mode.upper().startswith('FAST') else 5),
+
+                    )
+
+                )
+
+                print(
+
+                    f"Found {len(search_results)} "
+
+                    f"search results."
+
+                )
+
+                validated_sources = (
+
+                    self.source_validator.validate(
+
+                        search_results
+
+                    )
+
+                )
+
+                for source in validated_sources:
+
+                    scored_source = (
+
+                        self.source_scorer.score(
+
+                            source
+
+                        )
+
+                    )
+
+                    all_sources.append(
+
+                        scored_source
+
+                    )
+
+            except Exception as exc:
+
+                print(
+
+                    f"Research task failed: {exc}"
+
+                )
+
+        # =========================================================
+
+        # SOURCE DEDUPLICATION
+
+        # =========================================================
+
+        unique_sources = {}
+
+        for source in all_sources:
+
+            unique_sources[source.url] = source
+
+        all_sources = list(
+
+            unique_sources.values()
+
+        )
+
+        print(
+
+            f"\nCollected {len(all_sources)} "
+
+            f"unique sources."
+
+        )
+
+        if not all_sources:
+
+            raise RuntimeError(
+
+                "No usable sources were collected "
+
+                "from web research."
+
+            )
+
+        # =========================================================
+
+        # 3. WEB CONTENT EXTRACTION
+
+        # =========================================================
+
+        print(
+
+            "\n[3/10] Extracting webpage content..."
+
+        )
+
+        source_contents = []
+
+        extracted_sources = []
+
+        for index, source in enumerate(
+
+            all_sources,
+
+            start=1,
+
+        ):
+
+            print(
+
+                f"\nProcessing source "
+
+                f"{index}/{len(all_sources)}:"
+
+            )
+
+            print(source.url)
+
+            try:
+
+                content = (
+
+                    self.web_extractor.extract(
+
+                        source.url
+
+                    )
+
+                )
+
+                print(
+
+                    f"Extracted {len(content)} "
+
+                    f"characters."
+
+                )
+
+                source_contents.append(
+
+                    (
+
+                        source,
+
+                        content,
+
+                    )
+
+                )
+
+                extracted_sources.append(
+
+                    source
+
+                )
+
+            except Exception as exc:
+
+                print(
+
+                    f"Skipping source because "
+
+                    f"extraction failed: {exc}"
+
+                )
+
+        if not source_contents:
+
+            raise RuntimeError(
+
+                "No webpage content could be extracted."
+
+            )
+
+        print(
+
+            f"\nSuccessfully extracted content "
+
+            f"from {len(source_contents)} sources."
+
+        )
+
+        # =========================================================
+
+        # 4. EVIDENCE EXTRACTION
+
+        # =========================================================
+
+        print(
+
+            "\n[4/10] Extracting evidence..."
+
+        )
+
+        evidence_records = []
+
+        # ---------------------------------------------------------
+
+        # BATCHING
+
+        # ---------------------------------------------------------
+
+        # Multiple sources are processed in a single LLM call
+
+        # to reduce API usage.
+
+        # ---------------------------------------------------------
+
+        batch_size = 3
+
+        for batch_start in range(
+
+            0,
+
+            len(source_contents),
+
+            batch_size,
+
+        ):
+
+            batch = source_contents[
+
+                batch_start:
+
+                batch_start + batch_size
+
+            ]
+
+            batch_number = (
+
+                batch_start // batch_size
+
+            ) + 1
+
+            print(
+
+                f"\nEvidence batch "
+
+                f"{batch_number}: "
+
+                f"{len(batch)} sources"
+
+            )
+
+            try:
+
+                batch_evidence = (
+
+                    self.evidence_extractor.extract_batch(
+
+                        batch
+
+                    )
+
+                )
+
+                for evidence in batch_evidence:
+
+                    evidence.evidence_id = (
+
+                        f"EVD-"
+
+                        f"{len(evidence_records) + 1:03d}"
+
+                    )
+
+                    evidence_records.append(
+
+                        evidence
+
+                    )
+
+                print(
+
+                    f"Generated "
+
+                    f"{len(batch_evidence)} "
+
+                    f"evidence records."
+
+                )
+
+            except Exception as exc:
+
+                print(
+
+                    f"Evidence batch failed: "
+
+                    f"{exc}"
+
+                )
+
+        print(
+
+            f"\nTotal evidence records: "
+
+            f"{len(evidence_records)}"
+
+        )
+
+        if not evidence_records:
+
+            raise RuntimeError(
+
+                "No evidence records were generated."
+
+            )
+
+        # =========================================================
+
+        # 5. CLAIM EXTRACTION
+
+        # =========================================================
+
+        print(
+
+            "\n[5/10] Building research claims..."
+
+        )
+
+        claims = self.claim_extractor.extract(
+
+            evidence_records
+
+        )
+
+        print(
+
+            f"Generated {len(claims)} "
+
+            f"research claims."
+
+        )
+
+        if not claims:
+
+            raise RuntimeError(
+
+                "No research claims were generated."
+
+            )
+
+        # =========================================================
+
+        # 6. CONTRADICTION DETECTION
+
+        # =========================================================
+
+        print(
+
+            "\n[6/10] Detecting contradictions..."
+
+        )
+
+        contradictions = (
+
+            self.contradiction_detector.detect(
+
+                claims
+
+            )
+
+        )
+
+        print(
+
+            f"Detected {len(contradictions)} "
+
+            f"contradictions."
+
+        )
+
+        # =========================================================
+
+        # 7. INSIGHT ANALYSIS
+
+        # =========================================================
+
+        print(
+
+            "\n[7/10] Analyzing research insights..."
+
+        )
+
+        insights = (
+
+            self.insight_analyzer.analyze(
+
+                claims,
+
+                contradictions,
+
+            )
+
+        )
+
+        print(
+
+            f"Generated {len(insights)} "
+
+            f"insights."
+
+        )
+
+        # =========================================================
+
+        # 8. EVIDENCE LEDGER
+
+        # =========================================================
+
+        print(
+
+            "\n[8/10] Building evidence ledger..."
+
+        )
+
+        ledger = self.evidence_ledger.build(
+
+            evidence_records=evidence_records,
+
+            claims=claims,
+
+            insights=insights,
+
+        )
+
+        insight_traceability = (
+
+            self.evidence_ledger
+
+            .add_insight_traceability(
+
+                ledger=ledger,
+
+                insights=insights,
+
+            )
+
+        )
+
+        ledger_json_path = (
+
+            self.evidence_ledger.export_json(
+
+                ledger=ledger,
+
+                insights=insight_traceability,
+
+                output_path=(
+
+                    "reports/evidence_ledger.json"
+
+                ),
+
+            )
+
+        )
+
+        ledger_markdown_path = (
+
+            self.evidence_ledger.export_markdown(
+
+                ledger=ledger,
+
+                insights=insight_traceability,
+
+                output_path=(
+
+                    "reports/evidence_ledger.md"
+
+                ),
+
+            )
+
+        )
+
+        print(
+
+            f"Evidence ledger JSON: "
+
+            f"{ledger_json_path}"
+
+        )
+
+        print(
+
+            f"Evidence ledger Markdown: "
+
+            f"{ledger_markdown_path}"
+
+        )
+
+        # =========================================================
+
+        # 9. RESEARCH METRICS + REPORT
+
+        # =========================================================
+
+        print(
+
+            "\n[9/10] Calculating research metrics..."
+
+        )
+
+        metrics = self.research_metrics.calculate(
+
+            sources=all_sources,
+
+            extracted_sources=extracted_sources,
+
+            evidence=evidence_records,
+
+            claims=claims,
+
+            contradictions=contradictions,
+
+            insights=insights,
+
+        )
+
+        print("\nResearch Metrics:")
+
+        for key, value in metrics.items():
+
+            print(
+
+                f"  {key}: {value}"
+
+            )
+
+        metrics_path = self.metrics_exporter.export(
+            metrics=metrics,
+            output_path="reports/research_metrics.json",
+        )
+        print(f"Research metrics saved to: {metrics_path}")
+
+        # ---------------------------------------------------------
+
+
+        # Competitive intelligence from extracted source content.
+        competitive_intelligence = []
+        competitive_sources = (
+            source_contents[:2]
+            if mode.upper().startswith("FAST")
+            else source_contents
+        )
+
+        print(
+            f"Extracting competitive intelligence from "
+            f"{len(competitive_sources)} sources..."
+        )
+
+        for source, content in competitive_sources:
+            try:
+                item = self.competitive_intelligence.extract(
+                    source=source,
+                    content=content,
+                )
+                competitive_intelligence.append(item)
+            except Exception as exc:
+                print(
+                    "Competitive intelligence extraction failed "
+                    f"for {source.url}: {exc}"
+                )
+
+        print(
+
+            "\nGenerating executive report..."
+
+        )
+
+        report = self.report_generator.generate(
+
+            topic=research_objective.topic,
+
+            claims=claims,
+
+            insights=insights,
+
+            contradictions=contradictions,
+
+            competitive_intelligence=(
+
+                competitive_intelligence
+
+            ),
+
+        )
+
+        print(
+
+            "Executive report generated successfully."
+
+        )
+
+        # =========================================================
+
+        # 10. MARKDOWN + PDF EXPORT
+
+        # =========================================================
+
+        print(
+
+            "\n[10/10] Exporting research reports..."
+
+        )
+
+        # ---------------------------------------------------------
+
+        # MARKDOWN
+
+        # ---------------------------------------------------------
+
+        report_path = (
+
+            self.report_exporter.export_markdown(
+
+                report=report,
+
+                output_path=(
+
+                    "reports/research_report.md"
+
+                ),
+
+            )
+
+        )
+
+        print(
+
+            f"\nMarkdown report saved to: "
+
+            f"{report_path}"
+
+        )
+
+        # ---------------------------------------------------------
+
+        # PDF
+
+        # ---------------------------------------------------------
+
+        pdf_report_path = (
+
+            self.pdf_report_exporter.export(
+
+                report=report,
+
+                output_path=(
+
+                    "reports/research_report.pdf"
+
+                ),
+
+            )
+
+        )
+
+        print(
+
+            f"PDF report saved to: "
+
+            f"{pdf_report_path}"
+
+        )
+
+        # =========================================================
+
+        # FINAL SUMMARY
+
+        # =========================================================
+
+        print("\n" + "=" * 70)
+
+        print(
+
+            "PIPELINE COMPLETED SUCCESSFULLY"
+
+        )
+
+        print("=" * 70)
+
+        print(
+
+            f"Research tasks used : "
+
+            f"{len(selected_tasks)}"
+
+        )
+
+        print(
+
+            f"Sources collected   : "
+
+            f"{len(all_sources)}"
+
+        )
+
+        print(
+
+            f"Webpages extracted  : "
+
+            f"{len(source_contents)}"
+
+        )
+
+        print(
+
+            f"Evidence records    : "
+
+            f"{len(evidence_records)}"
+
+        )
+
+        print(
+
+            f"Claims generated    : "
+
+            f"{len(claims)}"
+
+        )
+
+        print(
+
+            f"Contradictions      : "
+
+            f"{len(contradictions)}"
+
+        )
+
+        print(
+
+            f"Insights generated  : "
+
+            f"{len(insights)}"
+
+        )
+
+        print(
+
+            f"Evidence ledger     : "
+
+            f"{ledger_json_path}"
+
+        )
+
+        print(
+
+            f"Metrics             : "
+
+            f"{metrics}"
+
+        )
+
+        print(
+
+            f"Markdown report     : "
+
+            f"{report_path}"
+
+        )
+
+        print(
+
+            f"PDF Report          : "
+
+            f"{pdf_report_path}"
+
+        )
+
+        print("=" * 70)
+
+        # =========================================================
+
+        # RETURN PIPELINE RESULTS
+
+        # =========================================================
+
+        return {
+
+            "report_path": report_path,
+
+            "pdf_report_path": pdf_report_path,
+
+            "ledger_json_path": ledger_json_path,
+
+            "ledger_markdown_path": (
+
+                ledger_markdown_path
+
+            ),
+
+            "metrics_path": metrics_path,
+
+            "metrics": metrics,
+
+        }

@@ -6,7 +6,11 @@ from app.models.evidence import Evidence
 
 
 class ClaimExtractor:
-    """Converts evidence records into traceable research claims."""
+    """
+    Converts evidence records into concise research claims.
+
+    Evidence is processed in larger batches to reduce LLM API usage.
+    """
 
     def __init__(self):
         self.llm = LLMClient()
@@ -14,48 +18,111 @@ class ClaimExtractor:
     def extract(
         self,
         evidence_records: list[Evidence],
+        batch_size: int = 25,
     ) -> list[Claim]:
-        """Extract research claims from a collection of evidence."""
+        """
+        Convert evidence into research claims.
+
+        Args:
+            evidence_records:
+                Evidence collected from research sources.
+
+            batch_size:
+                Number of evidence records processed per LLM call.
+
+        Returns:
+            List of Claim objects.
+        """
 
         if not evidence_records:
             return []
 
-        evidence_text = "\n\n".join(
-            (
-                f"EVIDENCE ID: {evidence.evidence_id}\n"
-                f"CLAIM: {evidence.claim}\n"
-                f"SUPPORTING TEXT: {evidence.extracted_text}\n"
-                f"CONFIDENCE: {evidence.confidence}"
+        all_claims = []
+
+        for batch_start in range(
+            0,
+            len(evidence_records),
+            batch_size,
+        ):
+
+            batch = evidence_records[
+                batch_start:
+                batch_start + batch_size
+            ]
+
+            print(
+                f"Processing claim batch "
+                f"{batch_start // batch_size + 1} "
+                f"({len(batch)} evidence records)..."
             )
-            for evidence in evidence_records
-        )
 
-        prompt = f"""
-You are a senior research analyst.
+            evidence_blocks = []
 
-Convert the evidence below into concise, factual research claims.
+            for evidence in batch:
 
-EVIDENCE
+                # Keep the prompt bounded.
+                supporting_text = (
+                    evidence.extracted_text or ""
+                )[:1800]
+
+                evidence_blocks.append(
+                    f"""
+EVIDENCE ID:
+{evidence.evidence_id}
+
+SOURCE:
+{evidence.source_title}
+
+CLAIM FROM SOURCE:
+{evidence.claim}
+
+SUPPORTING TEXT:
+{supporting_text}
+
+EVIDENCE CONFIDENCE:
+{evidence.confidence}
+"""
+                )
+
+            evidence_text = "\n".join(
+                evidence_blocks
+            )
+
+            prompt = f"""
+You are a senior research analyst working in an
+enterprise market research intelligence system.
+
+Convert the evidence below into concise,
+non-duplicated, factual research claims.
+
+EVIDENCE:
 {evidence_text}
 
-Instructions:
-- Use only information supported by the provided evidence.
-- Do not introduce outside knowledge.
-- Do not invent facts.
-- Combine related evidence when it supports the same factual claim.
-- Every claim must reference at least one evidence ID.
-- A claim may reference multiple evidence IDs.
-- Preserve important numerical values, dates, names, and conditions.
-- Do not make predictions unless the evidence explicitly supports them.
-- Confidence must be between 0.0 and 1.0.
-- Status should be "supported".
-- If the evidence does not support a meaningful claim, return an empty list.
+RULES:
 
-Return ONLY valid JSON in this format:
+- Use ONLY the provided evidence.
+- Do not invent facts.
+- Do not use outside knowledge.
+- Combine closely related evidence when appropriate.
+- Every claim MUST reference one or more exact evidence IDs.
+- Preserve evidence IDs exactly.
+- Do not create evidence IDs.
+- Avoid duplicate or nearly identical claims.
+- Keep claims specific and factual.
+- Do not make recommendations.
+- Do not make unsupported assumptions.
+- Confidence must be between 0.0 and 1.0.
+- Status should normally be "supported".
+- If evidence is weak or incomplete, reduce confidence.
+- Prefer fewer high-quality claims over many repetitive claims.
+
+Return ONLY valid JSON.
+
+Required format:
 
 [
     {{
-        "statement": "Factual research claim",
+        "statement": "Concise factual research claim",
         "evidence_ids": ["EVD-001"],
         "confidence": 0.0,
         "status": "supported"
@@ -66,26 +133,104 @@ Do not include markdown.
 Do not include explanations outside the JSON.
 """
 
-        response = self.llm.generate(prompt)
+            try:
 
-        try:
-            claim_data = json.loads(response)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                "The claim extractor returned invalid JSON."
-            ) from exc
-
-        claims = []
-
-        for index, item in enumerate(claim_data, start=1):
-            claims.append(
-                Claim(
-                    claim_id=f"CLM-{index:03d}",
-                    statement=item["statement"],
-                    evidence_ids=item["evidence_ids"],
-                    confidence=item["confidence"],
-                    status=item["status"],
+                response = self.llm.generate(
+                    prompt
                 )
-            )
 
-        return claims
+                claim_data = json.loads(
+                    response
+                )
+
+            except json.JSONDecodeError:
+
+                print(
+                    f"Warning: claim batch "
+                    f"{batch_start // batch_size + 1} "
+                    f"returned invalid JSON. "
+                    f"Skipping batch."
+                )
+
+                continue
+
+            except Exception as exc:
+
+                print(
+                    f"Warning: claim batch "
+                    f"{batch_start // batch_size + 1} "
+                    f"failed: {exc}"
+                )
+
+                continue
+
+            # Validate and convert returned claims.
+            for item in claim_data:
+
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                statement = item.get(
+                    "statement"
+                )
+
+                evidence_ids = item.get(
+                    "evidence_ids",
+                    [],
+                )
+
+                confidence = item.get(
+                    "confidence",
+                    0.0,
+                )
+
+                status = item.get(
+                    "status",
+                    "supported",
+                )
+
+                if not statement:
+                    continue
+
+                if not evidence_ids:
+                    continue
+
+                # Only retain evidence IDs that actually
+                # exist in the current evidence collection.
+                valid_evidence_ids = [
+                    evidence_id
+                    for evidence_id in evidence_ids
+                    if any(
+                        evidence.evidence_id
+                        == evidence_id
+                        for evidence in evidence_records
+                    )
+                ]
+
+                if not valid_evidence_ids:
+                    continue
+
+                all_claims.append(
+                    Claim(
+                        claim_id=(
+                            f"CLM-"
+                            f"{len(all_claims) + 1:03d}"
+                        ),
+                        statement=statement,
+                        evidence_ids=valid_evidence_ids,
+                        confidence=float(
+                            confidence
+                        ),
+                        status=status,
+                    )
+                )
+
+        print(
+            f"Total claims generated: "
+            f"{len(all_claims)}"
+        )
+
+        return all_claims
