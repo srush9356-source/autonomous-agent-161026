@@ -13,7 +13,7 @@ research_objective = ResearchObjective(
 
 pipeline = ResearchPipeline()
 
-report_path = pipeline.run(research_objective)
+report_path = pipeline.run(research_objective, mode="FAST")
 
 print("\nFinal report:")
 print(report_path)

@@ -1,4 +1,5 @@
 import json
+import re
 
 from app.llm.client import LLMClient
 from app.models.evidence import Evidence
@@ -6,7 +7,7 @@ from app.models.source import Source
 
 
 class EvidenceExtractor:
-    """Extracts evidence-backed findings from multiple sources in batches."""
+    """Extract evidence-backed findings from multiple sources."""
 
     def __init__(self):
         self.llm = LLMClient()
@@ -15,12 +16,6 @@ class EvidenceExtractor:
         self,
         source_contents: list[tuple[Source, str]],
     ) -> list[Evidence]:
-        """
-        Extract evidence from multiple sources using a single LLM call.
-
-        Each tuple contains:
-            (Source, webpage_content)
-        """
 
         if not source_contents:
             return []
@@ -31,24 +26,19 @@ class EvidenceExtractor:
             source_contents,
             start=1,
         ):
-            if not content.strip():
+            if not content or not content.strip():
                 continue
+
+            # Limit each source's input to reduce token usage.
+            content = content[:7000]
 
             source_blocks.append(
                 f"""
 SOURCE {index}
-
-SOURCE TITLE:
-{source.title}
-
-PUBLISHER:
-{source.publisher}
-
-URL:
-{source.url}
-
-SOURCE TYPE:
-{source.source_type}
+TITLE: {source.title}
+PUBLISHER: {source.publisher}
+URL: {source.url}
+TYPE: {source.source_type}
 
 CONTENT:
 {content}
@@ -61,91 +51,120 @@ CONTENT:
         combined_sources = "\n".join(source_blocks)
 
         prompt = f"""
-You are an evidence extraction specialist for an enterprise
-market research intelligence system.
+You are an evidence extraction specialist.
 
-Extract factual, evidence-backed findings from ALL sources below.
+Extract concise factual findings supported by these sources.
+Do not use outside knowledge or invent facts.
+Every source_url must exactly match a supplied source URL.
+Include relevant supporting text.
+Confidence must be between 0 and 1.
+Avoid duplicates.
 
+SOURCES:
 {combined_sources}
 
-INSTRUCTIONS:
-
-- Extract only information explicitly supported by the provided sources.
-- Do not invent facts.
-- Do not add outside knowledge.
-- Keep evidence tied to the correct source.
-- Focus on factual findings useful for market research.
-- Each evidence item must contain one concise factual claim.
-- Include relevant supporting text from the source.
-- Preserve the exact source URL for every evidence item.
-- Confidence must be between 0.0 and 1.0.
-- Avoid duplicate evidence.
-- If a source contains no useful factual evidence, do not create
-  evidence for that source.
-
-Return ONLY valid JSON in this format:
-
+Return ONLY a JSON array in this format:
 [
-    {{
-        "source_url": "https://example.com/source",
-        "claim": "Factual claim supported by the source",
-        "extracted_text": "Relevant supporting text from the source",
-        "confidence": 0.0
-    }}
+  {{
+    "source_url": "https://example.com/source",
+    "claim": "A concise factual claim",
+    "extracted_text": "Supporting source text",
+    "confidence": 0.8
+  }}
 ]
 
-IMPORTANT:
-- source_url MUST exactly match one of the URLs provided above.
-- Do not create URLs.
-- Do not include markdown.
-- Do not include explanations outside the JSON.
+If no useful evidence exists, return [].
+Do not include markdown or explanations.
 """
 
-        response = self.llm.generate(prompt)
+        try:
+            response = self.llm.generate(prompt)
+        except Exception as exc:
+            print(f"Warning: Evidence extraction failed: {exc}")
+            return []
 
         try:
-            evidence_data = json.loads(response)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                "The evidence extractor returned invalid JSON."
-            ) from exc
+            cleaned = response.strip()
 
-        # Map source URL → Source object.
+            # Remove optional Markdown code fences.
+            cleaned = re.sub(
+                r"^```(?:json)?\s*|\s*```$",
+                "",
+                cleaned,
+                flags=re.IGNORECASE,
+            ).strip()
+
+            evidence_data = json.loads(cleaned)
+
+            if not isinstance(evidence_data, list):
+                raise ValueError("Expected a JSON array.")
+
+        except (json.JSONDecodeError, ValueError, TypeError):
+            print(
+                "Warning: Evidence extractor returned invalid JSON. "
+                "Skipping this batch."
+            )
+            return []
+
         source_map = {
             source.url: source
-            for source, _ in source_contents
+            for source, content in source_contents
+            if content and content.strip()
         }
 
         evidence_records = []
+        seen_items = set()
 
         for item in evidence_data:
+            if not isinstance(item, dict):
+                continue
 
-            source_url = item["source_url"]
+            source_url = item.get("source_url")
+            claim = item.get("claim")
+            extracted_text = item.get("extracted_text")
 
             if source_url not in source_map:
                 continue
 
+            if not isinstance(claim, str) or not claim.strip():
+                continue
+
+            if (
+                not isinstance(extracted_text, str)
+                or not extracted_text.strip()
+            ):
+                continue
+
+            try:
+                confidence = float(item.get("confidence", 0.5))
+            except (TypeError, ValueError):
+                confidence = 0.5
+
+            confidence = max(0.0, min(1.0, confidence))
+
+            unique_key = (
+                source_url,
+                claim.strip().casefold(),
+            )
+
+            if unique_key in seen_items:
+                continue
+
+            seen_items.add(unique_key)
             source = source_map[source_url]
 
             evidence_records.append(
                 Evidence(
                     evidence_id="",
-                    claim=item["claim"],
+                    claim=claim.strip(),
                     source_title=source.title,
                     source_url=source.url,
                     publication_date=source.publication_date,
-                    extracted_text=item["extracted_text"],
+                    extracted_text=extracted_text.strip(),
                     source_type=source.source_type,
-                    confidence=item["confidence"],
+                    confidence=confidence,
                 )
             )
-
-        # Assign globally unique evidence IDs.
-        for index, evidence in enumerate(
-            evidence_records,
-            start=1,
-        ):
-            evidence.evidence_id = f"EVD-{index:03d}"
 
         return evidence_records
 
@@ -154,18 +173,8 @@ IMPORTANT:
         source: Source,
         content: str,
     ) -> list[Evidence]:
-        """
-        Backward-compatible single-source extraction.
 
-        Existing tests or components can still call:
-            extractor.extract(source, content)
-        """
+        if not content or not content.strip():
+            return []
 
-        if not content.strip():
-            raise ValueError(
-                "Source content cannot be empty."
-            )
-
-        return self.extract_batch(
-            [(source, content)]
-        )
+        return self.extract_batch([(source, content)])
